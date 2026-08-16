@@ -58,6 +58,7 @@ class AxisControlTab(CustomTab):
                 "Target Pause": False,
                 "Target Wait": 30,
                 "Target Timeout Stop": False,
+                "Pause Auto Combat After": False,
                 "Move Mappings": {},
             },
         )
@@ -200,7 +201,19 @@ class AxisControlTab(CustomTab):
         )
         self.target_timeout_stop_check.setChecked(bool(self.settings.get("Target Timeout Stop", False)))
         options.addRow("超时行为", self.target_timeout_stop_check)
+
+        self.auto_combat_pause_check = QCheckBox(
+            "椰果结束后暂停自动战斗；不勾选则结束后由自动战斗接管战斗", container
+        )
+        self.auto_combat_pause_check.setChecked(bool(self.settings.get("Pause Auto Combat After", False)))
+        options.addRow("自动战斗交接", self.auto_combat_pause_check)
         layout.addLayout(options)
+
+        layout.addWidget(
+            BodyLabel(
+                "输入归属：播放期间由椰果启动器独占游戏输入；自动战斗开启时，启动前与结束后由自动战斗操作角色，交接会显示在下方状态栏。"
+            )
+        )
 
         self.current_input_label = QLabel("当前按键：无", container)
         self.current_action_label = QLabel("程序输出：等待", container)
@@ -319,7 +332,10 @@ class AxisControlTab(CustomTab):
                     pass
             output_item = QTableWidgetItem(binding.config_text if binding else "")
             if binding is None:
-                output_item.setToolTip("这个动作无法自动识别，请手动填写实际输出")
+                if self.chart.is_noop_move(move_id):
+                    output_item.setToolTip("空招式仅占用时间线位置，无需实际输出")
+                else:
+                    output_item.setToolTip("这个动作无法自动识别，请手动填写实际输出")
             self.mapping_table.setItem(row, 0, label_item)
             self.mapping_table.setItem(row, 1, author_item)
             self.mapping_table.setItem(row, 2, output_item)
@@ -345,6 +361,9 @@ class AxisControlTab(CustomTab):
             label = self.mapping_table.item(row, 0).text()
             text = self.mapping_table.item(row, 2).text().strip()
             if not text:
+                if self.chart.is_noop_move(move_id):
+                    mappings[move_id] = None
+                    continue
                 raise AxisFormatError(f"动作“{label}”尚未配置实际输出")
             try:
                 binding = parse_output_binding(text)
@@ -383,6 +402,7 @@ class AxisControlTab(CustomTab):
                 self.target_pause_check.isChecked(),
                 self.target_wait_spin.value(),
                 self.target_timeout_stop_check.isChecked(),
+                self.auto_combat_pause_check.isChecked(),
             )
             task.start()
         except Exception as error:
@@ -438,6 +458,7 @@ class AxisControlTab(CustomTab):
         self.settings["Target Pause"] = self.target_pause_check.isChecked()
         self.settings["Target Wait"] = self.target_wait_spin.value()
         self.settings["Target Timeout Stop"] = self.target_timeout_stop_check.isChecked()
+        self.settings["Pause Auto Combat After"] = self.auto_combat_pause_check.isChecked()
 
     def _show_error(self, message: str) -> None:
         show_info_bar(self.window(), message, title="错误", error=True)

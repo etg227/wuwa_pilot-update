@@ -10,7 +10,7 @@ except ImportError:
 from src.task.process_feature import process_feature
 
 # 开发仓库固定为 dev，发布时由 CI 写入 tag。
-version = "v1.0.3"
+version = "v1.0.4"
 
 
 def _find_most_recently_run_pc_exe():
