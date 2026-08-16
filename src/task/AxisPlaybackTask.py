@@ -5,9 +5,9 @@ from PySide6.QtCore import QObject, Signal
 from src.axis.AxisChart import AxisChart, OutputBinding
 from src.axis.AxisRunner import AxisEvent, AxisOutput, AxisRunner, build_axis_events
 from src.axis.CombatMonitor import CombatMonitor
-from src.axis.SequenceRunner import SequenceRunner, build_sequence_steps
+from src.axis.SequenceRunner import UNTIL_STATES, SequenceRunner, build_sequence_steps
 from src.axis.VisualSync import verify_switch_async, wait_for_switch_sync
-from src.combat.CombatCheck import CombatCheck
+from src.task.BaseCombatTask import BaseCombatTask
 
 
 class AxisPlaybackSignals(QObject):
@@ -43,7 +43,7 @@ class InteractionAxisOutput(AxisOutput):
             self.interaction.send_key_up(binding.code)
 
 
-class AxisPlaybackTask(CombatCheck):
+class AxisPlaybackTask(BaseCombatTask):
     """由“椰果启动器”页面配置并加入统一任务队列的隐藏任务。"""
 
     def __init__(self, *args, **kwargs):
@@ -153,6 +153,14 @@ class AxisPlaybackTask(CombatCheck):
                     status_callback=self.signals.status_changed.emit,
                 )
                 monitor.start()
+            if self._sequence_mode and any(
+                step.move_id in UNTIL_STATES for step in sequence_steps
+            ):
+                # E 高亮检测需要角色对象；识别失败则条件步按超时推进，不阻塞播放。
+                try:
+                    self.load_chars()
+                except Exception:
+                    self.signals.status_changed.emit("角色识别失败，E 高亮检测将按超时推进")
             mode_text = "推进模式" if self._sequence_mode else "时间轴模式"
             title_suffix = "｜自动战斗已让位" if auto_combat_active else ""
             self.signals.status_changed.emit(f"正在执行：{chart.title}｜{mode_text}{title_suffix}")
@@ -171,6 +179,7 @@ class AxisPlaybackTask(CombatCheck):
                         should_continue_loop=(lambda: not monitor.gave_up) if monitor else None,
                         gate_callback=monitor.allow if monitor else None,
                         on_switch=self._on_sequence_switch if self._visual_sync else None,
+                        check_state=self._check_axis_state,
                         action_callback=self._on_action,
                         progress_callback=lambda value: self.signals.progress_changed.emit(round(value)),
                         status_callback=self.signals.status_changed.emit,
@@ -225,6 +234,28 @@ class AxisPlaybackTask(CombatCheck):
     def _on_timing(self, _event: AxisEvent, current_ms: float, average_ms: float, max_ms: float) -> None:
         self._last_timing = (current_ms, average_ms, max_ms)
         self.signals.timing_changed.emit(current_ms, average_ms, max_ms)
+
+    def _check_axis_state(self, name: str) -> bool:
+        """条件步的视觉检测；任何异常都返回 False，让条件步按超时推进。"""
+        try:
+            self.next_frame()
+            if name == "f_break":
+                return bool(self.check_f_break())
+            if name == "resonance_ready":
+                char = self.get_current_char(raise_exception=False)
+                return bool(char is not None and char.resonance_available())
+            if name == "resonance_cd":
+                char = self.get_current_char(raise_exception=False)
+                return bool(char is not None and char.has_cd("resonance"))
+            if name == "liberation_cd":
+                char = self.get_current_char(raise_exception=False)
+                return bool(char is not None and char.has_cd("liberation"))
+            if name == "echo_cd":
+                char = self.get_current_char(raise_exception=False)
+                return bool(char is not None and char.has_cd("echo"))
+        except Exception:
+            return False
+        return False
 
     def _on_sequence_switch(self, step) -> None:
         """切人后不阻塞衔接：后台校验槽位，确认失败补按一次。"""
